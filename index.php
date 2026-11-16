@@ -1,3 +1,4 @@
+
 <?php
 $pdo=new PDO('mysql:host='.(getenv('DB_HOST')?:'localhost').';dbname=dbms_project;charset=utf8mb4',getenv('DB_USER')?:'root',getenv('DB_PASS')?:'',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
 function q($s,$p=[]){global $pdo;$st=$pdo->prepare($s);$st->execute($p);return $st->fetchAll();}
@@ -23,7 +24,9 @@ $lerr='';
 if(!q("SELECT 1 FROM User_Account LIMIT 1"))foreach([['admin','admin',NULL],['pilot1','pilot',301],['pilot2','pilot',302],['safety','safety',303],['coord','coord',304]] as $s)q("INSERT INTO User_Account(username,password_hash,role,member_id) VALUES (?,?,?,?)",[$s[0],password_hash('demo123',PASSWORD_DEFAULT),$s[1],$s[2]]);
 if(($_POST['a']??'')=='login'){$u=q("SELECT * FROM User_Account WHERE username=?",[$_POST['u']])[0]??null;if($u&&password_verify($_POST['pw'],$u['password_hash'])){$_SESSION['u']=$u;header('Location: ?');exit;}$lerr='Invalid username or password.';}
 $msg=$err='';
-if($U=$_SESSION['u']??null)try{switch($_POST['a']??''){
+$AL=['pilot'=>['mission','wp','delm','flight','land'],'safety'=>['inc','bat','dst','inst','rem','cst'],'coord'=>[]];
+if($U=$_SESSION['u']??null)try{switch(($U['role']=='admin'||in_array($_POST['a']??'',$AL[$U['role']]))?($_POST['a']??''):'deny'){
+ case 'deny':if($_POST)$err='Your role is not allowed to do that.';break;
  case 'dr':q("INSERT INTO Drone(callsign,model,status,battery_percent) VALUES (?,?,'Ready',?)",[$_POST['cs'],$_POST['mo'],$_POST['bt']]);$msg='Drone added.';break;
  case 'bat':q("UPDATE Drone SET battery_percent=? WHERE drone_id=?",[$_POST['bt'],$_POST['d']]);$msg='Battery updated.';break;
  case 'dst':q("UPDATE Drone SET status=? WHERE drone_id=?",[$_POST['s'],$_POST['d']]);$msg='Drone status updated.';break;
@@ -47,30 +50,41 @@ if($U=$_SESSION['u']??null)try{switch($_POST['a']??''){
 }}catch(PDOException $x){$err=$x->errorInfo[2]??$x->getMessage();}
 
 $R=['admin'=>['Administrator',['dash','manage','missions','flights','fleet','incidents','parts','buildings','reports']],'pilot'=>['Pilot',['dash','missions','flights','reports']],'safety'=>['Safety Officer',['dash','fleet','incidents','parts','reports']],'coord'=>['Rescue Coordinator',['dash','buildings','reports']]];
-$L=['manage'=>'Manage Data','dash'=>'Dashboard','missions'=>'Mission Planner','flights'=>'Flights','fleet'=>'Fleet Health','incidents'=>'Incidents','parts'=>'Components','buildings'=>'Buildings & Rooms','reports'=>'Reports'];
+$L=['dash'=>'📊 Dashboard','manage'=>'🗂️ Manage Data','missions'=>'🗺️ Mission Planner','flights'=>'🛫 Flights','fleet'=>'🔋 Fleet Health','incidents'=>'⚠️ Incidents','parts'=>'🔧 Components','buildings'=>'🏢 Buildings & Rooms','reports'=>'📈 Reports'];
+$N=['dash'=>'Live summary using aggregate subqueries and the v_fleet_health view.','manage'=>'Basic insert and delete (CRUD). Foreign keys refuse to delete rows that are still in use.','missions'=>'Mission to Waypoint is 1:N. Waypoint is a weak entity: deleting a mission deletes its waypoints (ON DELETE CASCADE).','flights'=>'Flight links Mission, Drone and Pilot. A trigger blocks unsafe drones and non-pilots; a stored procedure starts the flight in one transaction.','fleet'=>'Airworthy = Ready + battery of 30% or more + no faulty installed part. A SQL view calculates it.','incidents'=>'Incident_Event is a weak entity of Flight. A Critical incident automatically grounds the drone (trigger).','parts'=>'Drone and Component are M:N, stored in their own table with installation and removal dates.','buildings'=>'Building to Room is 1:N. Room is a weak entity: deleting a building deletes its rooms.','reports'=>'GROUP BY and JOIN queries for the reports named in the problem statement.'];
 $role=$U['role']??'pilot';
 $p=in_array($_GET['p']??'dash',$R[$role][1])?($_GET['p']??'dash'):'dash';
 ?><!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Drone Search &amp; Rescue DBMS</title>
 <style>
-:root{--bg:#0f1720;--c:#182433;--t:#e6edf3;--m:#8fa3b8;--a:#38bdf8}
-*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--t)}
-header{padding:14px 24px;background:var(--c);display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
-h1{font-size:18px;margin:0}h1 span{color:var(--a)}nav a{color:var(--m);text-decoration:none;padding:6px 12px;border-radius:6px;margin-right:4px}
-nav a.on,nav a:hover{background:var(--bg);color:var(--a)}main{padding:20px 24px;max-width:1150px;margin:auto}
-.card{background:var(--c);border-radius:10px;padding:16px;margin-bottom:16px}h3{margin:0 0 10px;font-size:15px}
-.w{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{padding:7px 10px;text-align:left;border-bottom:1px solid #26364a;white-space:nowrap}th{color:var(--m);font-weight:500;font-size:12px;text-transform:uppercase}
-.pl{padding:2px 9px;border-radius:99px;font-size:12px;background:#334155}.p-critical,.p-damaged,.p-maintenance,.p-failed{background:#7f1d1d}.p-high{background:#9a3412}
-.p-medium,.p-inprogress,.p-planned{background:#854d0e}.p-low,.p-stable,.p-ready,.p-working,.p-successful,.p-completed{background:#166534}
-.bar{display:inline-block;width:80px;height:8px;background:#26364a;border-radius:4px;margin-right:6px}.bar i{display:block;height:8px;border-radius:4px}.ok{background:#22c55e}.lo{background:#ef4444}
-form{display:inline-flex;flex-wrap:wrap;gap:8px;margin:0 10px 10px 0;align-items:center}input,select{background:var(--bg);color:var(--t);border:1px solid #2d4057;border-radius:6px;padding:7px}
-button{background:var(--a);color:#06202e;border:0;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer}
-.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}.k{background:var(--c);border-radius:10px;padding:16px}.k b{display:block;font-size:28px;color:var(--a)}
-.m{color:var(--m)}.g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}details{margin-top:8px;color:var(--m)}pre{background:var(--bg);padding:10px;border-radius:6px;overflow-x:auto;color:#a5f3fc}
-.ms{padding:10px 14px;border-radius:8px;margin-bottom:14px;background:#14532d}.er{background:#7f1d1d}
+:root{--bg:#f3f5f9;--c:#fff;--t:#0f172a;--m:#64748b;--b:#e2e8f0}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--t)}
+header{background:#0f172a;color:#94a3b8;padding:12px 24px;display:flex;justify-content:space-between;align-items:center}
+h1{font-size:18px;margin:0;color:#fff}h1 span{color:#38bdf8}header a{color:#fff;background:#1e293b;padding:6px 12px;border-radius:8px;text-decoration:none;margin-left:10px}
+.app{display:flex;min-height:calc(100vh - 52px)}aside{width:220px;background:#fff;border-right:1px solid var(--b);padding:16px 10px;flex-shrink:0}aside:empty{display:none}
+aside a{display:block;padding:10px 12px;margin-bottom:4px;border-radius:8px;color:#334155;text-decoration:none;font-weight:500}aside a:hover{background:#f1f5f9}aside a.on{background:#2563eb;color:#fff}
+main{flex:1;padding:24px 28px;min-width:0;max-width:1150px}h2{margin:0;font-size:22px}
+.note{background:#eff6ff;border-left:4px solid #2563eb;padding:10px 14px;border-radius:6px;margin:10px 0 20px;color:#1e3a8a}
+.card{background:var(--c);border:1px solid var(--b);border-radius:12px;padding:18px;margin-bottom:18px;box-shadow:0 1px 2px #0000000a}h3{margin:0 0 12px;font-size:15px}
+.w{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--b);white-space:nowrap}
+th{background:#f8fafc;color:var(--m);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}tr:hover td{background:#f8fafc}
+.pl{padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600;background:#e2e8f0;color:#334155}
+.p-critical,.p-damaged,.p-maintenance,.p-failed{background:#fee2e2;color:#991b1b}.p-high{background:#ffedd5;color:#9a3412}
+.p-medium,.p-inprogress,.p-planned{background:#fef9c3;color:#854d0e}.p-low,.p-stable,.p-ready,.p-working,.p-successful,.p-completed{background:#dcfce7;color:#166534}
+.bar{display:inline-block;width:80px;height:8px;background:var(--b);border-radius:4px;margin-right:6px}.bar i{display:block;height:8px;border-radius:4px}.ok{background:#22c55e}.lo{background:#ef4444}
+form{display:inline-flex;flex-wrap:wrap;gap:8px;margin:0 10px 10px 0;align-items:center;background:#f8fafc;border:1px solid var(--b);padding:10px;border-radius:10px}
+input,select{background:#fff;color:var(--t);border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;font:inherit}input:focus,select:focus{outline:2px solid #93c5fd}
+button{background:#2563eb;color:#fff;border:0;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer}button:hover{background:#1d4ed8}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:18px}
+.k{background:#fff;border:1px solid var(--b);border-top:4px solid #2563eb;border-radius:12px;padding:16px;color:var(--m);text-transform:capitalize}.k b{display:block;font-size:30px;color:var(--t)}
+.k:nth-child(2){border-top-color:#22c55e}.k:nth-child(3){border-top-color:#f59e0b}.k:nth-child(5){border-top-color:#ef4444}
+.m{color:var(--m)}.g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+details{margin-top:10px;color:var(--m)}summary{cursor:pointer;font-size:12px}pre{background:#0f172a;padding:12px;border-radius:8px;overflow-x:auto;color:#7dd3fc}
+.ms{padding:10px 14px;border-radius:8px;margin-bottom:14px;background:#dcfce7;color:#166534}.er{background:#fee2e2;color:#991b1b}
+@media(max-width:760px){.app{flex-direction:column}aside{width:auto;display:flex;overflow-x:auto;border:0;padding:8px}aside a{white-space:nowrap}}
 </style></head><body>
 <header><h1>🚁 <span>Drone Search &amp; Rescue</span> Database</h1>
-<nav><?php if($U)echo '<span class="m">'.e($U['username']).' · '.$R[$role][0].'</span> <a href="?out=1">Logout</a>';?></nav></header>
-<main><?php if(!$U){echo '<div class="card" style="max-width:380px;margin:60px auto"><h3>Sign in</h3>'.($lerr?'<div class="ms er">'.e($lerr).'</div>':'').f('login','<input name="u" placeholder="Username" required><input name="pw" type="password" placeholder="Password" required>','Sign in').'<p class="m">Demo accounts (password demo123): admin, pilot1, pilot2, safety, coord</p></div></main></body></html>';exit;}?><nav style="margin-bottom:16px"><?php foreach($R[$role][1] as $k)echo '<a href="?role='.$role.'&p='.$k.'"'.($k==$p?' class="on"':'').'>'.$L[$k].'</a>';?></nav>
+<div><?php if($U)echo e($U['username']).' · '.$R[$role][0].' <a href="?out=1">Logout</a>';?></div></header>
+<div class="app"><aside><?php if($U)foreach($R[$role][1] as $k)echo '<a href="?p='.$k.'"'.($k==$p?' class="on"':'').'>'.$L[$k].'</a>';?></aside><main><?php if(!$U){echo '<div class="card" style="max-width:380px;margin:60px auto"><h3>Sign in</h3>'.($lerr?'<div class="ms er">'.e($lerr).'</div>':'').f('login','<input name="u" placeholder="Username" required><input name="pw" type="password" placeholder="Password" required>','Sign in').'<p class="m">Demo accounts (password demo123): admin, pilot1, pilot2, safety, coord</p></div></main></body></html>';exit;}?><h2><?=e($L[$p])?></h2><div class="note"><?=e($N[$p])?></div>
 <?php if($msg)echo '<div class="ms">'.e($msg).'</div>';if($err)echo '<div class="ms er">Database rejected this: '.e($err).'</div>';
 
 if($p=='dash'){
@@ -80,7 +94,7 @@ if($p=='dash'){
  show('Missions in progress',"SELECT m.mission_id,m.objective,b.building_name,b.condition_status FROM Mission m JOIN Building b ON b.building_id=m.building_id WHERE m.status='In Progress'");
  $a=q("SELECT d.callsign l,COUNT(f.flight_id) n FROM Drone d LEFT JOIN Flight f ON f.drone_id=d.drone_id GROUP BY d.drone_id,d.callsign");
  $b=q("SELECT severity l,COUNT(*) n FROM Incident_Event GROUP BY severity");
- echo '<div class="g2"><div class="card"><h3>Flights per drone</h3><canvas id="c1"></canvas></div><div class="card"><h3>Incidents by severity</h3><canvas id="c2"></canvas></div></div><script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script><script>Chart.defaults.color="#8fa3b8";new Chart(c1,{type:"bar",data:{labels:'.json_encode(array_column($a,'l')).',datasets:[{data:'.json_encode(array_map('intval',array_column($a,'n'))).',backgroundColor:"#38bdf8"}]},options:{plugins:{legend:{display:false}}}});new Chart(c2,{type:"doughnut",data:{labels:'.json_encode(array_column($b,'l')).',datasets:[{data:'.json_encode(array_map('intval',array_column($b,'n'))).',backgroundColor:["#ef4444","#f97316","#eab308","#22c55e"]}]}});</script>';
+ echo '<div class="g2"><div class="card"><h3>Flights per drone</h3><canvas id="c1"></canvas></div><div class="card"><h3>Incidents by severity</h3><canvas id="c2"></canvas></div></div><script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script><script>Chart.defaults.color="#475569";new Chart(c1,{type:"bar",data:{labels:'.json_encode(array_column($a,'l')).',datasets:[{data:'.json_encode(array_map('intval',array_column($a,'n'))).',backgroundColor:"#38bdf8"}]},options:{plugins:{legend:{display:false}}}});new Chart(c2,{type:"doughnut",data:{labels:'.json_encode(array_column($b,'l')).',datasets:[{data:'.json_encode(array_map('intval',array_column($b,'n'))).',backgroundColor:["#ef4444","#f97316","#eab308","#22c55e"]}]}});</script>';
 }
 if($p=='missions'){
  show('Missions',"SELECT m.mission_id,b.building_name,m.objective,m.start_time,m.status,(SELECT COUNT(*) FROM Waypoint w WHERE w.mission_id=m.mission_id) AS waypoints FROM Mission m JOIN Building b ON b.building_id=m.building_id ORDER BY m.mission_id");
@@ -135,4 +149,4 @@ if($p=='reports'){
  show('Incidents per component (while installed on the drone)',"SELECT c.serial_no,c.component_name,COUNT(i.event_no) AS incidents FROM Component c JOIN Drone_Component dc ON dc.component_id=c.component_id JOIN Flight f ON f.drone_id=dc.drone_id AND DATE(f.takeoff_time)>=dc.installation_date AND (dc.removal_date IS NULL OR DATE(f.takeoff_time)<=dc.removal_date) LEFT JOIN Incident_Event i ON i.flight_id=f.flight_id GROUP BY c.component_id,c.serial_no,c.component_name ORDER BY incidents DESC");
  show('Mission outcomes',"SELECT m.mission_id,m.objective,m.status,COUNT(f.flight_id) AS flights,SUM(f.result='Successful') AS successful FROM Mission m LEFT JOIN Flight f ON f.mission_id=m.mission_id GROUP BY m.mission_id,m.objective,m.status");
 }
-?></main></body></html>
+?></main></div></body></html>

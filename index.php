@@ -1,4 +1,3 @@
-
 <?php
 $pdo=new PDO('mysql:host='.(getenv('DB_HOST')?:'localhost').';dbname=dbms_project;charset=utf8mb4',getenv('DB_USER')?:'root',getenv('DB_PASS')?:'',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
 function q($s,$p=[]){global $pdo;$st=$pdo->prepare($s);$st->execute($p);return $st->fetchAll();}
